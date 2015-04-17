@@ -12,10 +12,13 @@ import deeplearning.utils
 def main():
     parser = argparse.ArgumentParser(description='Train LSTM for parallel corpora.')
     # PEP8: use ' and not " for strings
-    parser.add_argument('-i', '--input', default='parallel',
-                        help='input file (default parallel)')
+    parser.add_argument('-l', '--left', default='left_file',
+                        help='left corpus')
+    parser.add_argument('-r', '--right', default='right_file',
+                        help='right corpus')
     parser.add_argument('-n', '--num_sentences', default=2000, type=int, )
-    parser.add_argument('--test-file', default=None, type=str)
+    parser.add_argument('--test-file-left', default=None, type=str)
+    parser.add_argument('--test-file-right', default=None, type=str)
     parser.add_argument('--save-every', default=1, type=int)
     parser.add_argument('--load-model', default=None, type=str)
     parser.add_argument('--predict', default=None, type=str)
@@ -31,10 +34,15 @@ def main():
         return to_return
 
     def prepare_shared_embeddings(vocab, model):
+        from numpy.random import rand
         assert isinstance(vocab, dict)
         to_return = np.zeros((len(vocab) + 1, 100), dtype=np.float32)
         for k, v in vocab.iteritems():
-            to_return[v] = model[k.lower()]
+            if k in model:
+                # to_return[v] = model[k.lower()]
+                to_return[v] = model[k]
+            else:
+                to_return[v] = rand(1,100) - 0.5
         return to_return
 
     # we create a generator and avoid loading all sentences into a list
@@ -44,19 +52,24 @@ def main():
                 # yield [sentence.strip().split() for sentence in pair.split(u' ||| ')]
                 yield pair.split(u' ||| ')
 
+    def mono_sentences(fname):
+        with open(fname, encoding='utf-8', mode='r') as f:
+            for l in f:
+                yield l
+
     vocab_l, vocab_r = dict(), dict()
 
     test_sentences = []
-    if opts.test_file is not None:
-        print 'loading test file {}'.format(opts.test_file)
-        for (sen_l, sen_r) in sentences(opts.test_file):
+    if opts.test_file_left is not None:
+        print 'loading test files {} {}'.format(opts.test_file_left, opts.test_file_right)
+        for (sen_l, sen_r) in zip(mono_sentences(opts.test_file_left), mono_sentences(opts.test_file_right)):
             vocab_l, loaded_l = load_sentences([sen_l], vocab_l)
             vocab_r, loaded_r = load_sentences([sen_r], vocab_r)
             test_sentences.append((loaded_l, loaded_r))
 
     pairs = []
     idx = 0
-    for (sen_l, sen_r) in islice(sentences(opts.input, infinite=True), opts.num_sentences):
+    for (sen_l, sen_r) in islice(zip(mono_sentences(opts.left), mono_sentences(opts.right)), opts.num_sentences):
         print 'idx: {}'.format(idx)
         idx += 1
         vocab_l, loaded_l = load_sentences([sen_l], vocab_l)
@@ -172,7 +185,10 @@ def main():
         y_r_bad = layers_right_bad[-1].h[-1]
 
         def cos_dist(a, b):
-            return - (a * b).sum() / (a.norm(2) * b.norm(2))
+            flat_a = a.flatten()
+            flat_b = b.flatten()
+            div = flat_a.norm(2) * flat_b.norm(2)
+            return - flat_a.dot(flat_b) / div 
 
         cost_good = cos_dist(y_l, y_r)
         cost_l_bad = cos_dist(y_l_bad, y_l)
@@ -192,9 +208,11 @@ def main():
 
         updates = learning_rule(cost, params, eps=1e-6, rho=0.65, method='adadelta')
 
+        # cost_func = theano.function([left_trans, right_trans], [cost_trans_equiv], givens=[(left_non_trans, left_trans), (right_non_trans, right_trans)], on_unused_input='ignore')
         train = theano.function([left_trans, left_non_trans, right_trans, right_non_trans], [cost, y_l, y_r],
                                 updates=updates)
-        predictor = theano.function([left_trans, right_trans], y_l, y_r)
+        predictor_l = theano.function([left_trans,], y_l)
+        predictor_r = theano.function([right_trans,], y_r)
         for r in xrange(2000):
             print 'round: {}'.format(r)
             shuffle(pairs)
@@ -204,19 +222,23 @@ def main():
                 while random_idx == idx:
                     random_idx = choice(range(len(pairs)))
                 random_pair = pairs[random_idx]
-                this_cost, this_y_l, this_y_r = train(pair[0], random_pair[0], pair[1], random_pair[1])
+                # print 'debug print:'
+                # theano.printing.debugprint(pair[0])
+                this_cost, this_y_l, this_y_r = train(pair[0][0], random_pair[0][0], pair[1][0], random_pair[1][0])
+                print 'this cost: {}'.format(this_cost)
                 if idx % 50 == 0:
                     print 'this cost: {}'.format(this_cost)
 
-            # save_model(layers, 'layers_round_{}'.format(round))
+            save_model((layers_left, layers_right), 'layers_round')
             if predict_fname is not None and r % 10 == 0:
                 print 'predicting...'
                 to_output = []
                 for idx, (sent_l, sent_r) in enumerate(test_sentences):
                     print 'predicting #{}'.format(idx)
-                    emb_left, emb_right = predictor([sent_l, sent_r])
+                    emb_left = predictor_l([sent_l[0],])
+                    emb_right = predictor_r([sent_r[0],])
                     to_output.append((emb_left, emb_right))
-                save_model(to_output, predict_fname + '_round_'.format(r))
+                save_model(to_output, predict_fname)
 
     embeddings_l = load_embeddings(opts.embeddings_left)
     embeddings_r = load_embeddings(opts.embeddings_right)
