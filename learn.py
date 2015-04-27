@@ -8,6 +8,42 @@ import deeplearning.layer
 from deeplearning.learning_rule import *
 import deeplearning.utils
 
+def prepare_shared_embeddings(vocab, model,dim=100):
+    from numpy.random import rand
+    assert isinstance(vocab, dict)
+    to_return = np.zeros((len(vocab) + 1, dim), dtype=np.float32)
+    for k, v in vocab.iteritems():
+        if k in model:
+            # to_return[v] = model[k.lower()]
+            to_return[v] = model[k]
+        else:
+            # raise Exception('key {} not found'.format(k.encode('utf-8')))
+            to_return[v] = rand(1,dim) - 0.5
+    return to_return
+
+def load_embeddings(fname):
+    import gensim
+
+    to_return = gensim.models.Word2Vec.load(fname)
+    return to_return
+
+
+def load_txt_embeddings(fname):
+    import numpy as np
+    to_return = dict()
+    with open(fname, mode='r', encoding='utf-8') as fh:
+        for l in fh:
+            ss = l.strip().split(u' ', 1)
+            if len(ss) != 2:
+                raise Exception('ss: {} len: {} sth wrong {}'.format(ss, len(ss), l.strip()))
+            to_return[ss[0]] = np.fromstring(ss[1], sep=' ', dtype='float32')
+    return to_return
+
+def mono_sentences(fname):
+    with open(fname, encoding='utf-8', mode='r') as f:
+        for l in f:
+            yield l
+
 
 def main():
     parser = argparse.ArgumentParser(description='Train LSTM for parallel corpora.')
@@ -27,35 +63,12 @@ def main():
     # note that if x == [2, 3, 3], then x[:None] == x[:] == x (copy); no need for sys.maxint
     opts = parser.parse_args()
 
-    def load_embeddings(fname):
-        import gensim
-
-        to_return = gensim.models.Word2Vec.load(fname)
-        return to_return
-
-    def prepare_shared_embeddings(vocab, model):
-        from numpy.random import rand
-        assert isinstance(vocab, dict)
-        to_return = np.zeros((len(vocab) + 1, 100), dtype=np.float32)
-        for k, v in vocab.iteritems():
-            if k in model:
-                # to_return[v] = model[k.lower()]
-                to_return[v] = model[k]
-            else:
-                to_return[v] = rand(1,100) - 0.5
-        return to_return
-
     # we create a generator and avoid loading all sentences into a list
     def sentences(fname, infinite=False):
         with open(fname, encoding='utf-8', mode='r') as f:
             for pair in f:
                 # yield [sentence.strip().split() for sentence in pair.split(u' ||| ')]
                 yield pair.split(u' ||| ')
-
-    def mono_sentences(fname):
-        with open(fname, encoding='utf-8', mode='r') as f:
-            for l in f:
-                yield l
 
     vocab_l, vocab_r = dict(), dict()
 

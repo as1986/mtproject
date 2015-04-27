@@ -29,7 +29,7 @@ def load_bitext(fname, using_vocab_l = None, using_vocab_r = None):
     return dict_l, dict_r, sens_l, sens_r
 
 
-def load_sentences(sentences, using_vocab = None, embedding=None):
+def load_sentences(sentences, using_vocab = None, embedding=None, read_only=False):
     ''' loads a space separated file, creates the vocab dict, and return arrays of sentences
     :param fname: file name
     :return: (vocab, sentences)
@@ -44,8 +44,13 @@ def load_sentences(sentences, using_vocab = None, embedding=None):
         # print l.encode(u'utf-8')
         this_line = []
         for w in l.strip().split(u' '):
+            if len(w) == 0:
+                continue
             if w not in dict_to_return:
-                dict_to_return[w] = len(dict_to_return) + 1
+                if not read_only:
+                    dict_to_return[w] = len(dict_to_return) + 1
+                else:
+                    continue
             if embedding is None:
                 this_line.append(dict_to_return[w])
             else:
